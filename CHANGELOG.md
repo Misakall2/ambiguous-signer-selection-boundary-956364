@@ -1,5 +1,50 @@
 # Release Notes
 
+## Unreleased
+
+### Security Fixes
+
+* **JWS verification refuses ambiguous key selection.** Previously the verifier
+  called `keystore.get({ use: "sig", alg, kid })`, which returns the first
+  matching key. A trusted set holding two distinct keys with the same `kid` could
+  therefore verify or fail depending on import order, and could accept a
+  signature without ever establishing which key attested it. Verification now
+  gathers the trusted candidates, filters them by `kid`, purpose (`use`/`key_ops`)
+  and algorithm, and proceeds only when exactly one distinct key remains. Two
+  candidates produce `ERR_JWS_KEY_AMBIGUOUS`; candidates are never tried in turn.
+* A key sharing the requested `kid` but bearing another purpose (for example
+  `use: "enc"`) no longer counts as a verification candidate, so common
+  signing/encryption pairs remain unaffected.
+* Protected and unprotected headers may no longer restate the same field.
+* An embedded `jwk` whose `kid` contradicts the header, or a header that carries
+  both `jwk` and `x5c`, is rejected (`ERR_JWS_KEY_CONFLICT`). Embedded keys remain
+  opt-in via `allowEmbeddedKey`; `jku`/`x5u` are still never fetched.
+* Verification failures now carry a stable `err.code` and never echo the payload,
+  the serialized message, private key material, or embedded key contents.
+* For a JWS with several signatures, an ambiguous or conflicting trusted set
+  aborts verification instead of being skipped in favor of another signature.
+
+### Additions
+
+* `JWK.KeyStore#candidates(props, local)` resolves to a frozen snapshot of
+  matching keys, waiting for any in-flight `add()` to settle so a half-published
+  collection is never observed. `get()`/`all()`/`toJSON()` keep their previous
+  semantics.
+* Key identifiers are stored in a prototype-free map, so `"kid"` values such as
+  `"__proto__"` or `"constructor"` stay opaque identifiers.
+
+### Fixed
+
+* A verifier's `allowEmbeddedKey` option no longer leaks into later verifiers
+  through the shared default options.
+
+### Compatibility
+
+**This is a behavior change for key sets with duplicate `kid`s.** A set with one
+usable key per `kid` behaves as before. To migrate, remove the stale key, scope
+the verifier to a single key, or assign distinct `kid`s; see
+`examples/ambiguous-kid-migration.js` for a runnable, offline walk-through.
+
 ## [2.0.1](https://github.com/cisco/node-jose/compare/2.0.0...2.0.1) (2021-11-15)
 
 The changes in this release are only dependency updates. 

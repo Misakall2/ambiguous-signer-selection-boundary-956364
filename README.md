@@ -23,6 +23,7 @@ A JavaScript implementation of the JSON Object Signing and Encryption (JOSE) for
   - [Keys Used for Signing and Verifying](#keys-used-for-signing-and-verifying)
   - [Signing Content](#signing-content)
   - [Verifying a JWS](#verifying-a-jws)
+    - [Key Selection and Duplicate Key Identifiers](#key-selection-and-duplicate-key-identifiers)
     - [Allowing (or Disallowing) Signature Algorithms](#allowing-or-disallowing-signature-algorithms)
     - [Handling `crit` Header Members](#handling-crit-header-members)
 - [Encryption](#encryption)
@@ -143,6 +144,22 @@ key = keystore.get(kid, { kty: 'RSA', use: 'enc' });
 key = keystore.get({ kid: kid, kty: 'RSA', use: 'enc' });
 ```
 
+`get()` and `all()` keep their original semantics: they are public queries and
+may return several keys with the same `kid`.  For security-sensitive selection,
+use `candidates()`, which resolves to a frozen snapshot taken after any pending
+import has settled:
+
+```javascript
+keystore.candidates({ kid: kid }).
+        then(function(keys) {
+          // {keys} is a frozen Array of every matching Key; consumers decide
+          // whether zero, one, or several matches are acceptable.
+        });
+```
+
+Key signature verification only proceeds when exactly one distinct candidate
+remains; see [Key Selection and Duplicate Key Identifiers](#key-selection-and-duplicate-key-identifiers).
+
 ### Searching for Keys ###
 
 To retrieve all the keys from a keystore:
@@ -235,6 +252,10 @@ To remove a Key from its Keystore:
 keystore.remove(key);
 // NOTE: key.keystore does not change!!
 ```
+
+A key is visible only after `add()` resolves.  Importing and querying
+concurrently cannot expose a half-built collection: `candidates()` waits for any
+import already in flight before taking its snapshot.
 
 ### Importing and Exporting a Single Key ###
 
@@ -455,6 +476,60 @@ verifier.verify(input).
 The key can be embedded using either 'jwk' or 'x5c', and can be located in either the JWS Unprotected Header or JWS Protected Header.
 
 **NOTE:** `verify()` will use the embedded key (if found and permitted) instead of any other key.
+
+#### Key Selection and Duplicate Key Identifiers ####
+
+When verifying with a KeyStore, the verifier resolves a key in three steps:
+
+1. gather the trusted candidates whose `kid` matches the header (all candidates when the header has no `kid`);
+2. keep only keys that may verify (`use` absent or `"sig"`, and `key_ops` absent or containing `"verify"`) and that support the header's `alg`;
+3. require **exactly one distinct key** among those candidates.
+
+If step 3 finds more than one *different* key -- for example, two keys that share a `kid` -- verification is refused with an `ERR_JWS_KEY_AMBIGUOUS` error. The candidates are **not** tried one by one; selection never depends on import order. Two copies of the same key (same key material, imported twice) are not ambiguous. A key that shares the requested `kid` but has a different `use` (such as `"enc"`) is not a candidate; it never creates ambiguity for signature verification.
+
+For a JWS with several signatures, an ambiguous or conflicting trusted set aborts the whole verification instead of being treated as "this signature did not match"; otherwise a later signature could hide the defect. Other failures (a missing key, an unsupported algorithm, a bad signature) are per signature, and a message is accepted when one signature verifies.
+
+`kid` is treated as an opaque string. It is never interpreted as a property name, a file path, or a URL, and a `jku` or `x5u` header never causes a download.
+
+The verifier reads candidates through `keystore.candidates(props, local)`, which resolves to a frozen snapshot taken after any in-flight `add()` calls have settled. A later `add()` or `remove()` affects subsequent lookups immediately, but never changes a candidate set already handed to a running verification.
+
+Errors carry a stable `code` property so callers can distinguish cases without matching on message text:
+
+| `code` | Meaning |
+| --- | --- |
+| `ERR_JWS_ALG_NOT_ALLOWED` | The header's `alg` is outside the caller's `algorithms` policy. |
+| `ERR_JWS_ALG_UNSUPPORTED` | A candidate exists, but no trusted key can use that `alg`. |
+| `ERR_JWS_KEY_NOT_FOUND` | No trusted key (or permitted embedded key) matches. |
+| `ERR_JWS_KEY_AMBIGUOUS` | More than one distinct trusted key matches; refused. |
+| `ERR_JWS_KEY_CONFLICT` | Embedded key material contradicts the header (e.g. `kid` or both `jwk`/`x5c`). |
+| `ERR_JWS_HEADER_INVALID` | Malformed or duplicated protected/unprotected header fields. |
+| `ERR_JWS_SIGNATURE_INVALID` | Exactly one key was selected, but the signature did not verify. |
+
+Error messages and the `details` object list only public descriptors (`kid`, `kty`, `alg`, `use`, and a candidate count). They never include the payload, the full serialized message, private key parameters, or the contents of an embedded key.
+
+**Compatibility note.** Verification previously accepted whichever key `keystore.get()` returned first, so a set containing two distinct keys with the same `kid` could verify or fail depending on import order. Such a set is now refused with `ERR_JWS_KEY_AMBIGUOUS` until it is disambiguated. A set with one usable key per `kid` -- the normal case -- is unaffected, and existing signatures keep verifying.
+
+To migrate a set whose `kid`s are duplicated across generations:
+
+```javascript
+// 1. Keep public queries as-is; they still return every match.
+keystore.all({ kid: "shared-kid" });   // => [oldKey, newKey]
+
+// 2. Retire the key that should no longer authenticate.
+keystore.remove(oldKey);
+
+// 3. Verify again; exactly one candidate remains.
+jose.JWS.createVerify(keystore).verify(input).
+        then(function(result) { /* ... */ },
+             function(err) {
+               // distinguish failures by code, never by message text
+               if (err.code === "ERR_JWS_KEY_AMBIGUOUS") {
+                 // still two usable keys for this kid/alg
+               }
+             });
+```
+
+Alternatively, scope the verifier to a key-specific keystore (`keystore.temp()` plus the single intended key), or give each generation a distinct `kid`. An offline, runnable version of this scenario lives in [`examples/ambiguous-kid-migration.js`](examples/ambiguous-kid-migration.js) (`node examples/ambiguous-kid-migration.js`).
 
 #### Allowing (or Disallowing) Signature Algorithms ###
 
