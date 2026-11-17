@@ -1,0 +1,23 @@
+{
+  "env": {
+    "node": true,
+    "es6": true
+  },
+  "globals": {
+    "window": true
+  },
+  "extends": "eslint:recommended",
+  "plugins": [
+    "mocha-no-only"
+  ],
+  "rules": {
+    "mocha-no-only/mocha-no-only": ["warn"],
+    "no-buffer-constructor": ["error"],
+    "no-shadow": ["off"],
+    "no-underscore-dangle": ["off"],
+    "strict": ["error", "global"],
+    "yoda": ["off"],
+    "quotes": ["error", "double"],
+    "comma-dangle": ["error", "never"]
+  }
+}

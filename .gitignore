@@ -1,0 +1,27 @@
+env/
+node_modules
+coverage/
+dist/
+old/
+node_modules
+yarn.lock
+npm-shrinkwrap.json
+
+# Local runtime and credential material
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+*token*.local*

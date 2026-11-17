@@ -1,0 +1,19 @@
+# self + revision control
+.npmignore
+.gitignore
+.git
+.hg
+.hgtags
+
+# build environment
+.editorconfig
+.eslintrc
+gulpfile.js
+package-lock.json
+.travis.yml
+
+runas
+env/
+coverage/
+dist/
+test/
